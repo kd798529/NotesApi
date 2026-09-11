@@ -1,0 +1,7 @@
+bin/
+obj/
+.vscode/
+.DS_Store
+
+# Local configuration / secrets
+appsettings.Development.json
