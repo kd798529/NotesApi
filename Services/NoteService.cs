@@ -27,9 +27,20 @@ public class NoteService
         return await _noteRepository.GetById(id);
     }
 
-    public async Task Create(Note note)
+    public async Task<bool> Create(Note note)
     {
+        if (note.UserId is not null)
+        {
+            var user = await _userRepository.GetById(note.UserId.Value);
+
+            if (user is null)
+            {
+                return false;
+            }
+        }
         await _noteRepository.Add(note);
+
+        return true;
     }
 
     public async Task<Note?> Update(int id, UpdateNoteDto dto)

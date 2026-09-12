@@ -64,7 +64,15 @@ app.MapPost("/notes", async (CreateNoteDto dto, NoteService noteService) =>
         UserId = dto.UserId
     };
 
-    await noteService.Create(note);
+    var created = await noteService.Create(note);
+
+    if (!created)
+    {
+        return Results.BadRequest(new
+        {
+            message = $"User with ID {dto.UserId} does not exist."
+        });
+    }
 
     var response = new NoteResponseDto
     {
