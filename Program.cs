@@ -16,10 +16,13 @@ builder.Services.AddScoped<NoteService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddValidation();
+builder.Services.AddProblemDetails();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
+
+app.UseExceptionHandler();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -184,11 +187,117 @@ app.MapGet("/users/{id}", async (int id, UserService userService) =>
     {
         Id = user.Id,
         Name = user.Name,
-        Email = user.Email
+        Email = user.Email,
+        Notes = user.Notes.Select(note => new NoteResponseDto
+        {
+            Id = note.Id,
+            Title = note.Title,
+            Content = note.Content,
+            UserId = note.UserId
+        }).ToList()
+
     };
 
     return Results.Ok(response);
 
+});
+
+// Thsi endpoint creates a note that belongs to a specific user
+app.MapPost("/users/{id}/notes", async (int id, CreateNoteDto dto, NoteService noteService) =>
+{
+
+    var note = new Note
+    {
+        Title = dto.Title,
+        Content = dto.Content,
+        UserId = id
+
+    };
+
+
+    var created = await noteService.Create(note);
+
+    if (!created)
+    {
+        return Results.NotFound(new
+        {
+            message = $"User with ID {id} does not exist."
+        });
+    }
+
+    var response = new NoteResponseDto
+    {
+        Title = note.Title,
+        Content = note.Content,
+        Id = note.Id,
+        UserId = note.UserId
+    };
+
+    return Results.Created($"/users/{note.Id}", response);
+
+});
+
+
+//This Route retrieves all the notes that belong to a certain user
+app.MapGet("/users/{id}/notes", async (int id, UserService userService) =>
+{
+    var user = await userService.GetById(id);
+
+    if (user is null)
+    {
+        return Results.NotFound();
+    }
+
+    var response = user.Notes.Select(note => new NoteResponseDto
+    {
+        Id = note.Id,
+        Title = note.Title,
+        Content = note.Content,
+        UserId = note.UserId
+
+    });
+
+    return Results.Ok(response);
+
+});
+
+app.MapPut("/users/{id}", async (int id, UpdateUserDto dto, UserService userService) =>
+{
+    var user = await userService.Update(id, dto);
+
+    if (user is null)
+    {
+        return Results.NotFound();
+    }
+
+    var response = new UserResponseDto
+    {
+        Name = user.Name,
+        Email = user.Email,
+        Notes = user.Notes.Select(note => new NoteResponseDto
+        {
+            Id = note.Id,
+            Title = note.Title,
+            Content = note.Content,
+            UserId = note.UserId
+        }).ToList()
+
+    };
+
+
+    return Results.Ok(response);
+});
+
+app.MapDelete("/users/{id}", async (int id, UserService userService) =>
+{
+    var deleted = await userService.Delete(id);
+
+    if (!deleted)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.NoContent();
 });
 
 app.Run();

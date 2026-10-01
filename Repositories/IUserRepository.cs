@@ -7,4 +7,6 @@ public interface IUserRepository
     Task<List<User>> GetAll();
     Task<User?> GetById(int Id);
     Task Add(User user);
+    Task Update(User user);
+    Task Delete(User user);
 }
