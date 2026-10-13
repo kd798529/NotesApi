@@ -4,6 +4,12 @@ using NotesApi.Models;
 using NotesApi.Dtos;
 using Microsoft.EntityFrameworkCore;
 using NotesApi.Data;
+using Microsoft.AspNetCore.Identity;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,12 +21,36 @@ builder.Services.AddScoped<INoteRepository, NoteRepository>();
 builder.Services.AddScoped<NoteService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddValidation();
 builder.Services.AddProblemDetails();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT key is missing.");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(jwtKey)
+            )
+        };
+    });
+
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.UseExceptionHandler();
 
@@ -149,7 +179,15 @@ app.MapPost("/users", async (CreateUserDto dto, UserService userService) =>
         Email = dto.Email
     };
 
-    await userService.Create(user);
+    var created = await userService.Create(user, dto.Password);
+
+    if (!created)
+    {
+        return Results.Conflict(new
+        {
+            message = $"A user with email {dto.Email} alsready exists."
+        });
+    }
 
     var response = new UserResponseDto
     {
@@ -158,6 +196,84 @@ app.MapPost("/users", async (CreateUserDto dto, UserService userService) =>
         Email = user.Email
     };
     return Results.Created($"/users/{user.Id}", response);
+});
+
+//User Login endpoint
+app.MapPost("/login", async (
+    LoginDto dto,
+    UserService userService,
+    IConfiguration configuration) =>
+{
+    // 1. Check the email and password.
+    // If they are correct, Login() returns the matching User.
+    // If they are wrong, it returns null.
+    var user = await userService.Login(dto.Email, dto.Password);
+
+    // 2. If no valid user was found, reject the login attempt.
+    if (user is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    // 3. Read the secret JWT signing key from configuration.
+    // In our project, this comes from User Secrets.
+    var jwtKey = configuration["Jwt:Key"]
+        ?? throw new InvalidOperationException("JWT key is missing.");
+
+    // 4. Create claims.
+    // Claims are pieces of identity information stored inside the JWT.
+    var claims = new[]
+    {
+        // Store the user's ID in the token.
+        new Claim(
+            ClaimTypes.NameIdentifier,
+            user.Id.ToString()
+        ),
+
+        // Store the user's email in the token.
+        new Claim(
+            ClaimTypes.Email,
+            user.Email
+        )
+    };
+
+    // 5. Convert our secret JWT key from a string into bytes,
+    // then wrap it in a security key object.
+    var key = new SymmetricSecurityKey(
+        Encoding.UTF8.GetBytes(jwtKey)
+    );
+
+    // 6. Create the signing credentials.
+    // This says:
+    // "Sign the token using our secret key and HMAC-SHA256."
+    var credentials = new SigningCredentials(
+        key,
+        SecurityAlgorithms.HmacSha256
+    );
+
+    // 7. Build the actual JWT.
+    var token = new JwtSecurityToken(
+        // Put our user's claims inside the token.
+        claims: claims,
+
+        // Make the token expire one hour from now.
+        expires: DateTime.UtcNow.AddHours(1),
+
+        // Sign the token so our server can later verify
+        // that it is legitimate and hasn't been tampered with.
+        signingCredentials: credentials
+    );
+
+    // 8. Convert the JwtSecurityToken object into the long
+    // JWT string that can actually be sent to the client.
+    var tokenString = new JwtSecurityTokenHandler()
+        .WriteToken(token);
+
+    // 9. Send the JWT back to the client.
+    return Results.Ok(new
+    {
+        token = tokenString
+    });
 });
 
 app.MapGet("/users", async (UserService userService) =>
@@ -235,7 +351,8 @@ app.MapPost("/users/{id}/notes", async (int id, CreateNoteDto dto, NoteService n
 
     return Results.Created($"/users/{note.Id}", response);
 
-});
+})
+.RequireAuthorization();
 
 
 //This Route retrieves all the notes that belong to a certain user
@@ -259,7 +376,7 @@ app.MapGet("/users/{id}/notes", async (int id, UserService userService) =>
 
     return Results.Ok(response);
 
-});
+}).RequireAuthorization();
 
 app.MapPut("/users/{id}", async (int id, UpdateUserDto dto, UserService userService) =>
 {
