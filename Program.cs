@@ -118,8 +118,21 @@ app.MapPost("/notes", async (CreateNoteDto dto, NoteService noteService) =>
     return Results.Created($"/notes/{note.Id}", response);
 });
 
-app.MapGet("/notes/{id}", async (int id, NoteService noteService) =>
+app.MapGet("/notes/{id}", async (
+    int id,
+    ClaimsPrincipal user,
+    NoteService noteService) =>
 {
+    // Read the logged-in user's ID from the JWT.
+    var userIdClaim = user.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    // Convert the claim from string → int.
+    if (!int.TryParse(userIdClaim, out var currentUserId))
+    {
+        return Results.Unauthorized();
+    }
+
+    // Find the requested note.
     var note = await noteService.GetById(id);
 
     if (note is null)
@@ -127,19 +140,56 @@ app.MapGet("/notes/{id}", async (int id, NoteService noteService) =>
         return Results.NotFound();
     }
 
+    // Make sure the logged-in user owns this note.
+    if (note.UserId != currentUserId)
+    {
+        return Results.Forbid();
+    }
+
     var response = new NoteResponseDto
     {
         Id = note.Id,
         Title = note.Title,
-        Content = note.Content
+        Content = note.Content,
+        UserId = note.UserId
     };
 
     return Results.Ok(response);
-});
+})
+.RequireAuthorization();
 
-app.MapPut("/notes/{id}", async (int id, UpdateNoteDto dto, NoteService noteService) =>
+app.MapPut("/notes/{id}", async (
+    int id,
+    UpdateNoteDto dto,
+    ClaimsPrincipal user,
+    NoteService noteService) =>
 {
+    // Read the logged-in user's ID from the JWT.
+    var userIdClaim = user.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    // Convert the user ID claim from string → int.
+    if (!int.TryParse(userIdClaim, out var currentUserId))
+    {
+        return Results.Unauthorized();
+    }
+
+    // Find the note first.
+    var existingNote = await noteService.GetById(id);
+
+    if (existingNote is null)
+    {
+        return Results.NotFound();
+    }
+
+    // Make sure this note belongs to the logged-in user.
+    if (existingNote.UserId != currentUserId)
+    {
+        return Results.Forbid();
+    }
+
+    // Ownership is valid, so now allow the update.
     var note = await noteService.Update(id, dto);
+
     if (note is null)
     {
         return Results.NotFound();
@@ -149,25 +199,62 @@ app.MapPut("/notes/{id}", async (int id, UpdateNoteDto dto, NoteService noteServ
     {
         Id = note.Id,
         Title = note.Title,
-        Content = note.Content
-
+        Content = note.Content,
+        UserId = note.UserId
     };
 
     return Results.Ok(response);
-});
+})
+.RequireAuthorization();
 
-app.MapDelete("/notes/{id}", async (int id, NoteService noteService) =>
+app.MapDelete("/notes/{id}", async (
+    int id,
+    ClaimsPrincipal user,
+    NoteService noteService) =>
 {
+    // Read the logged-in user's ID from the JWT.
+    var userIdClaim = user.FindFirstValue(ClaimTypes.NameIdentifier);
 
-    var deleted = await noteService.Delete(id);
+    // Convert the claim from string → int.
+    if (!int.TryParse(userIdClaim, out var currentUserId))
+    {
+        return Results.Unauthorized();
+    }
 
-    if (!deleted)
+    // Find the note being requested.
+    var note = await noteService.GetById(id);
+
+    if (note is null)
     {
         return Results.NotFound();
     }
 
-    return Results.NoContent(); //No content means "Your request succeeded, but there's nothing I need to send back."
-});
+    // Make sure the note belongs to the logged-in user.
+    if (note.UserId != currentUserId)
+    {
+        return Results.Forbid();
+    }
+
+    await noteService.Delete(id);
+
+    return Results.NoContent();
+})
+.RequireAuthorization();
+
+//me endpoint for to read claims(get user id and email from the token)
+app.MapGet("/me", (ClaimsPrincipal user) =>
+{
+    var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    var email = user.FindFirstValue(ClaimTypes.Email);
+
+    return Results.Ok(new
+    {
+        userId,
+        email
+    });
+})
+.RequireAuthorization();
 
 //User Endpoints Start here
 
