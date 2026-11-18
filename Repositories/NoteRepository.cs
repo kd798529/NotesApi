@@ -23,6 +23,11 @@ public class NoteRepository : INoteRepository
         return await _dbContext.Notes.FindAsync(id);
     }
 
+    public async Task<List<Note>> GetUserById(int userId)
+    {
+        return await _dbContext.Notes.Where(note => note.UserId == userId).ToListAsync();
+    }
+
     public async Task Add(Note note)
     {
         _dbContext.Notes.Add(note);

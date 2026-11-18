@@ -7,6 +7,7 @@ public interface INoteRepository
     Task<List<Note>> GetAll();
 
     Task<Note?> GetById(int id);
+    Task<List<Note>> GetByUserId(int userId);
 
     Task Add(Note note);
 
